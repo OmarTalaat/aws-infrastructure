@@ -1,0 +1,16 @@
+
+
+1 - create create.sh and update.sh file  to facilitae command
+
+
+2-create yaml file  for script and json file for parms
+
+3-in yaml file  NB: create one by one not all at same time and look for the diagram in each time important thing order fro resorse
+		in this file organize the code in line 
+      ( 1 -  vpc create is the main container 
+         2-  internet gate way 
+	  3 - subnet pubilc and  the privet
+	 4- Nat gateway 
+	 5- Routtable pubilc and then peivet to organize counication )
+
+4- 
