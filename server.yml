@@ -1,0 +1,166 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description:  By  Omar Othman, Server Stack For High Availability Web App Deployment.
+  
+Parameters:
+  EnvironmentName:
+    Description: "Will be prefixed to all resources names."
+    Type: String
+  
+Resources:
+    SGLoadBalancer:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            GroupDescription: Allow http connections to the load balancer
+            VpcId:
+                Fn::ImportValue: !Sub "${EnvironmentName}-VpcId"
+            SecurityGroupEgress:
+                - IpProtocol: tcp
+                  FromPort: 80
+                  ToPort: 80
+                  CidrIp: 0.0.0.0/0
+                - IpProtocol: tcp
+                  FromPort: 8080
+                  ToPort: 8080
+                  CidrIp: 0.0.0.0/0
+            SecurityGroupIngress:
+                - IpProtocol: tcp
+                  FromPort: 80
+                  ToPort: 80
+                  CidrIp: 0.0.0.0/0
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-SG-LB
+    SGWebApp:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            GroupDescription: Security group for the web application
+            VpcId:
+                Fn::ImportValue: !Sub "${EnvironmentName}-VpcId"
+            SecurityGroupIngress:
+                - IpProtocol: tcp
+                  FromPort: 80
+                  ToPort: 80
+                  CidrIp: 0.0.0.0/0
+            SecurityGroupEgress:
+                - IpProtocol: tcp
+                  FromPort: 0
+                  ToPort: 65535
+                  CidrIp: 0.0.0.0/0
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-SG-LB
+    AutoScalingGroupLaunchConfig:
+        Type: AWS::AutoScaling::LaunchConfiguration
+        Properties:
+            AssociatePublicIpAddress: false
+            ImageId: ami-0184e674549ab8432
+            KeyName: Udacitykpname
+            InstanceType: t3.medium
+            UserData:
+                Fn::Base64: !Sub |
+                    #!/bin/bash
+                    # Install docker
+                    apt-get update
+                    apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+                    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+                    add-apt-repository \
+                    "deb [arch=amd64] https://download.docker.com/linux/ubuntu \
+                    $(lsb_release -cs) \
+                    stable"
+                    apt-get update
+                    apt-get install -y docker-ce
+                    usermod -aG docker ubuntu
+                    docker run -p 8080:8080 tomcat:8.0
+            SecurityGroups:
+                - !Ref SGWebApp
+            BlockDeviceMappings:
+                - DeviceName: "/dev/sdk"
+                  Ebs:
+                    DeleteOnTermination: true
+                    VolumeSize: 10
+
+    AutoScalingGroup:
+        Type: AWS::AutoScaling::AutoScalingGroup
+        Properties:
+            LaunchConfigurationName: !Ref AutoScalingGroupLaunchConfig
+            AutoScalingGroupName: "ASG WebApp"
+            VPCZoneIdentifier:
+                - Fn::ImportValue: !Sub ${EnvironmentName}-PrivSubNets
+            MinSize: 4
+            MaxSize: 6
+            DesiredCapacity: 4
+            TargetGroupARNs:
+                - !Ref LBTargetGroup
+
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-ASGWebApp
+                  PropagateAtLaunch: True
+    LoadBalancerWebApp:
+        Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+        Properties:
+            SecurityGroups:
+                - Ref: LoadBalancerSecGroup
+            Subnets:
+                - Fn::ImportValue: !Sub "${EnvironmentName}-Pub1SubNet"
+                - Fn::ImportValue: !Sub "${EnvironmentName}-Pub2SubNet"
+            Tags:
+                - Key: Name
+                  Value: !Sub "${EnvironmentName}-LoadBalancer"
+    LoadBalancerWebApp:
+        Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+        Properties:
+            SecurityGroups:
+                - !Ref SGLoadBalancer
+            Subnets:
+                - Fn::ImportValue: !Sub "${EnvironmentName}-Pub1SubNet"
+                - Fn::ImportValue: !Sub "${EnvironmentName}-Pub2SubNet"
+            Tags:
+                - Key: Name
+                  Value: !Sub "${EnvironmentName}-LoadBalancer"
+
+    LoadBalancerListener:
+        Type: AWS::ElasticLoadBalancingV2::Listener
+        Properties:
+            LoadBalancerArn: !Ref LoadBalancerWebApp
+            DefaultActions:
+                - Type: forward
+                  TargetGroupArn: !Ref LBTargetGroup
+            Port: 80
+            Protocol: HTTP
+    LBListenerRule:
+        Type: AWS::ElasticLoadBalancingV2::ListenerRule
+        Properties:
+            Actions:
+                - Type: forward
+                  TargetGroupArn: !Ref LBTargetGroup
+            Conditions:
+                - Field: path-pattern
+                  Values: [/]
+            ListenerArn: !Ref LoadBalancerListener
+            Priority: 1
+    LBTargetGroup:
+        Type: AWS::ElasticLoadBalancingV2::TargetGroup
+        Properties:
+            HealthCheckEnabled: true
+            HealthCheckIntervalSeconds: 10
+            HealthCheckPath: /
+            HealthCheckProtocol: HTTP
+            HealthCheckTimeoutSeconds: 8
+            HealthyThresholdCount: 2
+            Port: 80
+            Protocol: HTTP
+            UnhealthyThresholdCount: 5
+            VpcId:
+                Fn::ImportValue: !Sub "${EnvironmentName}-VpcId"
+            Tags:
+                - Key: Name
+                  Value: !Sub "${EnvironmentName}-LBTargetGroup"
+Outputs:
+    WebAppLoadBalancerDNSName:
+        Description: DNS name or Public URL of the Load Balancer
+        Value: !Join [ "", [ 'http://', !GetAtt LoadBalancerWebApp.DNSName ]]
+        Export:
+            Name: !Sub ${EnvironmentName}-LB-DNSName
+
+
